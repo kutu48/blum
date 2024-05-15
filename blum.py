@@ -21,7 +21,6 @@ logger.add(
 BASE_URL = "https://game-domain.blum.codes/api/v1/farming"
 USER_CHECK_URL = "https://gateway.blum.codes/v1/user/me"
 BALANCE_URL = "https://game-domain.blum.codes/api/v1/user/balance"
-CLAIM_FRIENDS_URL = "https://gateway.blum.codes/v1/friends/claim"
 
 # Function to get common headers with the current authorization token
 def get_headers(auth_token):
@@ -84,13 +83,6 @@ def start_farming(auth_token):
     response.raise_for_status()
     return response.json()
 
-# Function to claim friends rewards
-def claim_friends(auth_token):
-    headers = get_headers(auth_token)  # Get headers with updated token
-    response = requests.post(CLAIM_FRIENDS_URL, headers=headers)
-    response.raise_for_status()
-    return response.json()
-
 # Function to get the current balance and farming status
 def get_balance(auth_token):
     headers = get_headers(auth_token)  # Get headers with updated token
@@ -98,9 +90,11 @@ def get_balance(auth_token):
     response.raise_for_status()  # Raises exception if not 2xx
     return response.json()
 
-# Infinite loop with token validation, balance checking, and claiming logic
+# Infinite loop with token validation, balance checking, claiming, and switching accounts logic
 def main_loop(account):
-    last_friends_claim_time = 0  # Initialize last claim time to 0
+    account_index = int(account.split("_")[1]) - 1  # Get the account index from the account name
+    num_accounts = len(auth_tokens)
+
     while True:
         try:
             auth_token = auth_tokens[account]
@@ -121,22 +115,22 @@ def main_loop(account):
             # Get current timestamp
             current_timestamp = int(time.time() * 1000)  # Convert to milliseconds
 
-            # Check if it's time to claim friends rewards (every 12 hours)
-            if current_timestamp - last_friends_claim_time >= 12 * 60 * 60 * 1000:
-                logger.info("Claiming friends rewards...")
-                claim_friends_response = claim_friends(auth_token)
-                logger.info(f"Friends Claim Response: {claim_friends_response}")
-                last_friends_claim_time = current_timestamp  # Update last claim time
-
             # Check if endTime is less than or equal to the current timestamp
             end_time = farming_info.get("endTime")
             if end_time and end_time <= current_timestamp:
-                logger.info("Farming session has ended. Claiming and restarting.")
+                logger.info("Farming session has ended. Claiming and switching to the next account.")
 
-                # Claim and start farming
+                # Claim farming rewards
                 claim_response = claim_farming(auth_token)
                 logger.info(f"Claim Response: {claim_response}")
 
+                # Switch to the next account
+                account_index = (account_index + 1) % num_accounts
+                account = f"account_{account_index + 1}"
+                auth_token = auth_tokens[account]
+                logger.info(f"Switched to account: {account}")
+
+                # Start farming on the new account
                 start_response = start_farming(auth_token)
                 logger.info(f"Start Response: {start_response}")
             else:
@@ -147,7 +141,7 @@ def main_loop(account):
                 logger.info(f"Farming is still in progress, user Balance : {balance_info['availableBalance']} - farm balance {farming_info['balance']} - next claim {formatted_date}")
 
                 # Calculate time to wait until next claim
-                time_to_wait = (end_time - current_timestamp) / 1000  # Convert to seconds
+                time_to_wait = max((end_time - current_timestamp) / 1000, 0)  # Convert to seconds and ensure it's not negative
                 time.sleep(time_to_wait)  # Sleep until next claim time
         except Exception as e:
             logger.error(f"An error occurred: {e}")
